@@ -20,4 +20,8 @@ M.get_filter_dirs = function()
   return { ".git", "node_modules" }
 end
 
+M.get_junit_path = function()
+  return "junit.phpunit.xml"
+end
+
 return M

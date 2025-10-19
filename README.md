@@ -70,6 +70,7 @@ adapters = {
     root_files = { "composer.json", "phpunit.xml", ".gitignore" },
     filter_dirs = { ".git", "node_modules" },
     env = {}, -- for example {XDEBUG_CONFIG = 'idekey=neotest'}
+    junit_path = nil, -- custom path for junit output (defaults to temp file)
     dap = nil, -- to configure `dap` strategy put single element from `dap.configurations.php`
   }),
 }
@@ -132,6 +133,26 @@ You can even set `filter_dirs` with a function which returns a table:
 ```lua
 require("neotest-phpunit")({
   filter_dirs = function() return { "vendor" } end
+})
+```
+
+### Custom JUnit output path
+
+By default, the adapter uses a temporary file for PHPUnit's junit output. You can customize this path:
+
+```lua
+require("neotest-phpunit")({
+  junit_path = "/path/to/your/junit.xml"
+})
+```
+
+Or use a function for dynamic path generation:
+
+```lua
+require("neotest-phpunit")({
+  junit_path = function()
+    return vim.fn.getcwd() .. "/junit-results.xml"
+  end
 })
 ```
 

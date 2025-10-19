@@ -1,4 +1,5 @@
 local logger = require("neotest.logging")
+local lib = require("neotest.lib")
 
 local M = {}
 local separator = "::"
@@ -54,11 +55,21 @@ end
 ---@param test table
 ---@param output_file string
 ---@return table
-local function make_outputs(test, output_file)
+local function make_outputs(test, output_file, project_root)
   local test_attr = test["_attr"] or test[1]["_attr"]
 
-  local test_id = test_attr.file .. separator .. test_attr.line
-  logger.info("PHPUnit id:", { test_id })
+  local file = test_attr.file
+  if file then
+    if type(file) == "string" and not lib.files.exists(file) then
+      local suff = file:match("(/tests/.*)$")
+      if suff and project_root then
+        file = vim.fs.joinpath(project_root, suff)
+      end
+    end
+  end
+
+  local test_id = file .. "::" .. test_attr.line
+  logger.debug("JUnit->host path:", { junit = test_attr.file, host = file, id = test_id })
 
   local classname = test_attr.classname or test_attr.class
   local test_output = {
@@ -72,9 +83,9 @@ local function make_outputs(test, output_file)
     local error_message = test_failed[1][1]
     test_output.status = "failed"
     test_output.short = error_message
-    
+
     local errors = {}
-    
+
     -- Extract error lines from the stack trace
     -- Format: /path/to/file.php:123
     for line_info in error_message:gmatch("([^\n]+%.php:%d+)") do
@@ -86,7 +97,7 @@ local function make_outputs(test, output_file)
         })
       end
     end
-    
+
     -- If no matching errors found in the file, add error at test line
     if #errors == 0 then
       table.insert(errors, {
@@ -94,7 +105,7 @@ local function make_outputs(test, output_file)
         message = error_message,
       })
     end
-    
+
     test_output.errors = errors
   end
 
@@ -106,29 +117,39 @@ end
 ---@param output_file string
 ---@param output_table table
 ---@return table
-local function iterate_test_outputs(tests, output_file, output_table)
-  for i = 1, #tests, 1 do
+local function iterate_test_outputs(tests, output_file, out, project_root)
+  for i = 1, #tests do
     if #tests[i] == 0 then
-      local test_id, test_output = make_outputs(tests[i], output_file)
-      if output_table[test_id] ~= nil and output_table[test_id].status == "failed" then
-        -- keep previously failed result
-      else
-        output_table[test_id] = test_output
+      local id, res = make_outputs(tests[i], output_file, project_root)
+      if not (out[id] and out[id].status == "failed") then
+        out[id] = res
       end
     else
-      iterate_test_outputs(tests[i], output_file, output_table)
+      iterate_test_outputs(tests[i], output_file, out, project_root)
     end
   end
-  return output_table
+  return out
 end
 
 ---Get the test results from the parsed xml
 ---@param parsed_xml_output table
 ---@param output_file string
 ---@return neotest.Result[]
-M.get_test_results = function(parsed_xml_output, output_file)
-  local tests = iterate_key(parsed_xml_output, "testcase", {})
-  return iterate_test_outputs(tests, output_file, {})
+M.get_test_results = function(parsed_xml_output, output_file, project_root)
+  local tests = {}
+  local function collect(t, key, acc)
+    if type(t) == "table" then
+      for k, v in pairs(t) do
+        if k == key then
+          table.insert(acc, v)
+        end
+        collect(v, key, acc)
+      end
+    end
+    return acc
+  end
+  collect(parsed_xml_output, "testcase", tests)
+  return iterate_test_outputs(tests, output_file, {}, project_root)
 end
 
 return M

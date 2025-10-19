@@ -141,15 +141,51 @@ function NeotestAdapter.discover_positions(path)
   })
 end
 
+local function project_root_from(path)
+  local result
+  for _, ignore in ipairs(config.get_root_ignore_files()) do
+    result = lib.files.match_root_pattern(ignore)(path)
+    if result then
+      return nil
+    end
+  end
+  for _, f in ipairs(config.get_root_files()) do
+    result = lib.files.match_root_pattern(f)(path)
+    if result then
+      break
+    end
+  end
+  return result or lib.files.match_root_pattern(".git")(path)
+end
+
+local function rel_to_root(abs_path, root)
+  local rp = vim.loop.fs_realpath(abs_path) or abs_path
+  local rr = vim.loop.fs_realpath(root) or root
+  if rp:sub(1, #rr) == rr then
+    local i = #rr + 1
+    if rp:sub(i, i) == "/" then
+      i = i + 1
+    end
+    return rp:sub(i)
+  end
+  return abs_path
+end
+
 ---@param args neotest.RunArgs
 ---@return neotest.RunSpec | nil
 function NeotestAdapter.build_spec(args)
   local position = args.tree:data()
-  local results_path = async.fn.tempname()
+  local results_path = config.get_junit_path() or async.fn.tempname()
   local program = config.get_phpunit_cmd()
 
+  local proj_root = project_root_from(position.path) or async.fn.getcwd()
+  local rel_path = position.path
+  if position.name ~= "tests" then
+    rel_path = rel_to_root(position.path, proj_root)
+  end
+
   local script_args = {
-    position.name ~= "tests" and position.path,
+    position.name ~= "tests" and rel_path,
     "--log-junit=" .. results_path,
   }
 
@@ -179,7 +215,8 @@ function NeotestAdapter.build_spec(args)
   return {
     command = command,
     context = {
-      results_path = results_path,
+      results_path = vim.fn.getcwd() .. "/junit.phpunit.xml",
+      project_root = proj_root,
     },
     strategy = get_strategy_config(args.strategy, program, script_args),
     env = args.env or config.get_env(),
@@ -206,7 +243,12 @@ function NeotestAdapter.results(test, result, tree)
     return {}
   end
 
-  local ok, results = pcall(utils.get_test_results, parsed_data, output_file)
+  local ok, results = pcall(
+    utils.get_test_results,
+    parsed_data,
+    output_file,
+    test.context.project_root or (project_root_from(tree:data().path) or async.fn.getcwd())
+  )
   if not ok then
     logger.error("Could not get test results", output_file)
     return {}
@@ -259,6 +301,13 @@ setmetatable(NeotestAdapter, {
     end
     if type(opts.dap) == "table" then
       dap_configuration = opts.dap
+    end
+    if is_callable(opts.junit_path) then
+      config.get_junit_path = opts.junit_path
+    elseif opts.junit_path then
+      config.get_junit_path = function()
+        return opts.junit_path
+      end
     end
     return NeotestAdapter
   end,
